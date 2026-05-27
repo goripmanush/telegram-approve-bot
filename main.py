@@ -72,7 +72,7 @@ def check_crypto_prices():
                     old_price = price_cache[coin]
                     change = ((current_price - old_price) / old_price) * 100
                     
-                    if abs(change) >= 0.5:
+                    if abs(change) >= 0.001:
                         emoji = "📈" if change > 0 else "📉"
                         msg = f"{emoji} **{coin.upper()} Alert!**\n\nPrice: ${current_price:,.4f}\nChange: {change:+.2f}%"
                         url_send = f"https://api.telegram.org/bot{TOKEN_1}/sendMessage"
