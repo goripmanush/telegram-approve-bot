@@ -33,7 +33,12 @@ def auto_approve(message):
 
 def run_approve_bot():
     print("🚀 Auto-Approve Bot Running...")
-    approve_bot.infinity_polling()
+    try:
+        approve_bot.remove_webhook() # 🔥 Webhook error fix
+        time.sleep(1)
+        approve_bot.infinity_polling()
+    except Exception as e:
+        print(f"Approve Polling Error: {e}")
 
 # ==========================================
 # 2. CRYPTO ALERT BOT (0.5% UP/DOWN)
@@ -129,21 +134,24 @@ def auto_react(message):
 
 def run_like_bot():
     print("🚀 Auto Like/React Bots Running...")
-    like_bot.infinity_polling()
+    try:
+        like_bot.remove_webhook() # 🔥 Webhook error fix
+        time.sleep(1)
+        like_bot.infinity_polling()
+    except Exception as e:
+        print(f"Like Bot Polling Error: {e}")
 
 # ==========================================
 # 🔥 MAIN RUNNER
 # ==========================================
 if __name__ == "__main__":
-    print("🌟 System Starting: Running all 5 Bots in parallel...")
+    print("🌟 System Starting: Cleaning old connections & Running all 5 Bots...")
     
-    # Starting tasks in separate parallel threads
     threading.Thread(target=run_approve_bot, daemon=True).start()
     threading.Thread(target=run_crypto_alert, daemon=True).start()
     threading.Thread(target=run_meme_bot, daemon=True).start()
     threading.Thread(target=run_like_bot, daemon=True).start()
     
-    # Keeps the main process alive
     while True:
         time.sleep(1)
 
