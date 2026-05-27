@@ -1,157 +1,124 @@
-import telebot
-import requests
+import os
 import time
-import threading
-import random
+import requests
+import logging
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
+import asyncio
 
-# ==========================================
-# 🔑 TOKENS & CONFIGURATION
-# ==========================================
-APPROVE_TOKEN = "8742755067:AAED_xD9uLZE0NH6K9av7uMDFnVpzvHJxhs"
-ALERT_TOKEN = "8854485261:AAH9e9SHq2xAcY6ABBIhqmfM21EUjyYh2Bw"
-MEME_TOKEN = "7549790569:AAGk-9atIfsDKEj83jtHooM4MSKd04ZARx8"
-LIKE_TOKEN_1 = "7126896765:AAF3YK18lMHY-IBe6Dc7c2mwAJ2ZxsyEfOI"
-LIKE_TOKEN_2 = "7595974396:AAHO_cPoA-BjXhkoz5G4lENV9jPESzR2GjA"
+# Setup logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-CHANNEL_ID = "@Tradecryptolife"
+# --- CONFIGURATION (Get from Render Environment Variables) ---
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # Format: @Tradecryptolife or -100xxxxxxxxx
+MEME_BOT_TOKEN = os.getenv("MEME_BOT_TOKEN")
+ALERT_BOT_TOKEN = os.getenv("ALERT_BOT_TOKEN")
+LIKE_BOT_TOKEN = os.getenv("LIKE_BOT_TOKEN")
 
-# Bot Instances
-approve_bot = telebot.TeleBot(APPROVE_TOKEN)
-meme_bot = telebot.TeleBot(MEME_TOKEN)
-like_bot = telebot.TeleBot(LIKE_TOKEN_1)
+# Initialize Bots
+meme_bot = Bot(token=MEME_BOT_TOKEN) if MEME_BOT_TOKEN else None
+alert_bot = Bot(token=ALERT_BOT_TOKEN) if ALERT_BOT_TOKEN else None
 
-# ==========================================
-# 1. AUTO APPROVE BOT (@TradeLifeApproveBot)
-# ==========================================
-@approve_bot.chat_join_request_handler()
-def auto_approve(message):
+# Track crypto prices for alerts
+LAST_PRICES = {"bitcoin": 0.0, "ethereum": 0.0}
+
+# --- TASK 1: CRYPTO MEME POSTER ---
+async def post_crypto_meme():
+    if not meme_bot or not CHANNEL_ID:
+        return
     try:
-        approve_bot.approve_chat_join_request(message.chat.id, message.from_user.id)
-        print(f"✅ Approved User: {message.from_user.first_name}")
+        # Fetching a random meme from a meme API or Reddit
+        response = requests.get("https://meme-api.com/gimme/cryptocurrencymemes").json()
+        meme_url = response.get("url")
+        if meme_url:
+            await meme_bot.send_photo(chat_id=CHANNEL_ID, photo=meme_url, caption="😂 Stay updated, stay ahead! #CryptoMeme")
+            logging.info("Meme posted successfully!")
     except Exception as e:
-        print(f"Approve Error: {e}")
+        logging.error(f"Error posting meme: {e}")
 
-def run_approve_bot():
-    print("🚀 Auto-Approve Bot Running...")
-    try:
-        approve_bot.remove_webhook() # 🔥 Webhook error fix
-        time.sleep(1)
-        approve_bot.infinity_polling()
-    except Exception as e:
-        print(f"Approve Polling Error: {e}")
-
-# ==========================================
-# 2. CRYPTO ALERT BOT (0.5% UP/DOWN)
-# ==========================================
-COINS = "bitcoin,ethereum,binancecoin,solana,ripple,cardano,dogecoin,toncoin,ondo-us-dollar-yield"
-API_URL = "https://api.coingecko.com/api/v3/coins/markets"
-
-def get_prices():
-    try:
-        params = {'vs_currency': 'usd', 'ids': COINS, 'order': 'market_cap_desc'}
-        response = requests.get(API_URL, params=params, timeout=10)
-        if response.status_code == 200:
-            return {coin['id']: coin['current_price'] for coin in response.json()}
-    except Exception as e:
-        print(f"API Error: {e}")
-    return None
-
-def send_alert(message):
-    url = f"https://api.telegram.org/bot{ALERT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHANNEL_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print(f"Alert Send Error: {e}")
-
-def run_crypto_alert():
-    print("🚀 Crypto 0.5% Alert Bot Running...")
-    last_prices = get_prices()
+async def meme_scheduler():
     while True:
-        time.sleep(60) # Checks price every 60 seconds
-        current_prices = get_prices()
-        if not current_prices or not last_prices:
-            continue
+        await post_crypto_meme()
+        await asyncio.sleep(14400) # Posts a meme every 4 hours (14400 seconds)
 
-        for coin_id, current_price in current_prices.items():
-            last_price = last_prices.get(coin_id)
-            if not last_price:
-                continue
+# --- TASK 2: CRYPTO PRICE ALERT (0.5% Change) ---
+async def check_crypto_prices():
+    global LAST_PRICES
+    if not alert_bot or not CHANNEL_ID:
+        return
+    try:
+        # Fetch top crypto prices from CoinGecko
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd"
+        data = requests.get(url).json()
+        
+        for coin in ["bitcoin", "ethereum"]:
+            current_price = data[coin]["usd"]
+            last_price = LAST_PRICES[coin]
             
-            change = ((current_price - last_price) / last_price) * 100
-            coin_name = coin_id.upper()
+            if last_price != 0.0:
+                # Calculate percentage change
+                percent_change = ((current_price - last_price) / last_price) * 100
+                
+                if abs(percent_change) >= 0.5:
+                    direction = "🚀 UP" if percent_change > 0 else "🔻 DOWN"
+                    message = f"⚠️ **Crypto Alert!**\n\n🪙 #{coin.upper()} has gone {direction} by {abs(percent_change):.2f}%\n💵 Current Price: ${current_price:,}"
+                    await alert_bot.send_message(chat_id=CHANNEL_ID, text=message, parse_mode="Markdown")
             
-            if change >= 0.5:
-                send_alert(f"🟢 *PUMP ALERT*\n\n🪙 Coin: #{coin_name}\n💰 Price: ${current_price:,.4f}\n📈 Change: +{change:.2f}%\n⏱️ Interval: Last 1 Min")
-            elif change <= -0.5:
-                send_alert(f"🔴 *DUMP ALERT*\n\n🪙 Coin: #{coin_name}\n💰 Price: ${current_price:,.4f}\n📉 Change: {change:.2f}%\n⏱️ Interval: Last 1 Min")
-        last_prices = current_prices
+            LAST_PRICES[coin] = current_price
+    except Exception as e:
+        logging.error(f"Error checking prices: {e}")
 
-# ==========================================
-# 3. CRYPTO MEME BOT (@GoogleWab3bot)
-# ==========================================
-MEMES = [
-    "😂 Checked my crypto portfolio today... Even my stablecoins are crying. 📉 #CryptoLife",
-    "🚀 Buying the dip of the dip of the dip... Help, I am officially out of money! 📉💀",
-    "😎 Me explaining to my family why holding 100 million meme coins is a solid retirement plan. 🐕🪙",
-    "📉 Bitcoin drops 1%: *Panic Sell!*\n📈 Bitcoin pumps 1%: *Where is my Lamborghini?* 🏎️",
-    "🥱 Sleep is for people who don't trade crypto. We watch charts 24/7. 📊👁️",
-    "🤑 Buy High, Sell Low. This is the ultimate crypto trader strategy! 💸📉"
-]
-
-def run_meme_bot():
-    print("🚀 Meme Bot Running...")
+async def price_alert_scheduler():
     while True:
-        try:
-            meme_bot.send_message(CHANNEL_ID, random.choice(MEMES))
-            print("✅ Meme Posted!")
-        except Exception as e:
-            print(f"Meme Error: {e}")
-        time.sleep(7200) # Posts a meme every 2 hours (7200 seconds)
+        await check_crypto_prices()
+        await asyncio.sleep(60) # Checks every 60 seconds
 
-# ==========================================
-# 4 & 5. AUTO REACTION BOTS (Emoji Likes)
-# ==========================================
-EMOJIS = ["🔥", "🥰", "🤣", "⭐", "👍", "🚀", "👏", "❤️"]
-
-@like_bot.channel_post_handler()
-def auto_react(message):
+# --- TASK 3: AUTOMATIC INLINE EMOJI REACTION BUTTONS ---
+async def add_reactions(update, context):
+    # This triggers whenever a new post comes in the channel
     try:
-        emoji1 = random.choice(EMOJIS)
-        emoji2 = random.choice(EMOJIS)
+        channel_post = update.channel_post
+        if not channel_post:
+            return
+            
+        # Create Emoji Buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("⭐ 0", callback_data="react_star"),
+                InlineKeyboardButton("🤣 0", callback_data="react_laugh"),
+                InlineKeyboardButton("🔥 0", callback_data="react_fire"),
+                InlineKeyboardButton("♥️ 0", callback_data="react_love"),
+                InlineKeyboardButton("🥰 0", callback_data="react_smile")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Bot 1 Reaction (@Sstetn_bot)
-        like_bot.set_message_reaction(message.chat.id, message.message_id, [telebot.types.ReactionTypeEmoji(emoji1)], is_big=False)
-        
-        # Bot 2 Reaction (@BTCUSwalletbot) via API Call
-        url = f"https://api.telegram.org/bot{LIKE_TOKEN_2}/setMessageReaction"
-        payload = {"chat_id": message.chat.id, "message_id": message.message_id, "reaction": [{"type": "emoji", "emoji": emoji2}]}
-        requests.post(url, json=payload)
-        
-        print(f"✅ Reacted with {emoji1} & {emoji2}")
+        # Edit the post to add buttons
+        await context.bot.edit_message_reply_markup(
+            chat_id=channel_post.chat_id,
+            message_id=channel_post.message_id,
+            reply_markup=reply_markup
+        )
     except Exception as e:
-        print(f"Reaction Error: {e}")
+        logging.error(f"Error adding reaction buttons: {e}")
 
-def run_like_bot():
-    print("🚀 Auto Like/React Bots Running...")
-    try:
-        like_bot.remove_webhook() # 🔥 Webhook error fix
-        time.sleep(1)
-        like_bot.infinity_polling()
-    except Exception as e:
-        print(f"Like Bot Polling Error: {e}")
+# --- MAIN RUNNER ---
+def main():
+    # Start the Like/Reaction Bot Application listener
+    if LIKE_BOT_TOKEN:
+        app = Application.builder().token(LIKE_BOT_TOKEN).build()
+        app.add_handler(MessageHandler(filters.ChatType.CHANNEL, add_reactions))
+        
+        # Get the event loop to run background tasks alongside the bot listener
+        loop = asyncio.get_event_loop()
+        loop.create_task(meme_scheduler())
+        loop.create_task(price_alert_scheduler())
+        
+        logging.info("All bots are starting...")
+        app.run_polling()
+    else:
+        print("Please provide a LIKE_BOT_TOKEN to start the bot runner.")
 
-# ==========================================
-# 🔥 MAIN RUNNER
-# ==========================================
 if __name__ == "__main__":
-    print("🌟 System Starting: Cleaning old connections & Running all 5 Bots...")
-    
-    threading.Thread(target=run_approve_bot, daemon=True).start()
-    threading.Thread(target=run_crypto_alert, daemon=True).start()
-    threading.Thread(target=run_meme_bot, daemon=True).start()
-    threading.Thread(target=run_like_bot, daemon=True).start()
-    
-    while True:
-        time.sleep(1)
+    main()
 
