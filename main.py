@@ -1,8 +1,20 @@
 import time
 import requests
 import schedule
+from flask import Flask
+from threading import Thread
 
-# --- CONFIGURATION ---
+# --- Flask Web Server Setup (To keep Render alive) ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is running 24/7!"
+
+def run_web_server():
+    app.run(host='0.0.0.0', port=8080)
+
+# --- TELEGRAM CONFIGURATION ---
 CHANNEL_ID = "@Tradecryptolife"
 
 TOKEN_1 = "8742755067:AAED_xD9uLZE0NH6K9av7uMDFnVpzvHJxhs"   # Crypto Alert Bot
@@ -101,10 +113,14 @@ schedule.every().day.at("21:00").do(post_crypto_quotes)
 
 if __name__ == "__main__":
     print("=========================================")
-    print("🚀 All 7 Bots are Configured and Starting...")
-    print("🔥 Auto-Reaction System is ACTIVE!")
+    print("🚀 Starting Web Server and Bots...")
     print("=========================================")
     
+    # Start the web server in a background thread
+    t = Thread(target=run_web_server)
+    t.start()
+    
+    # Run initial price check
     check_crypto_prices()
     
     while True:
